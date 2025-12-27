@@ -513,8 +513,10 @@ const ui = {
   list: document.getElementById("deliveryList"),
   addBtn: document.getElementById("addBtn"),
   zoneBtns: document.querySelectorAll(".zone-btn"),
+  voiceToggle: document.getElementById("voiceToggle"),
 };
 
+// === INIZIALIZZAZIONE ===
 function init() {
   loadZone(currentZoneName);
   ui.addBtn.addEventListener("click", addDelivery);
@@ -522,35 +524,57 @@ function init() {
     if (e.key === "Enter") addDelivery();
   });
 
-  // Richiedi permesso notifiche all'avvio (funziona solo su HTTPS/PWA)
+  // Sblocco audio per iOS: la prima interazione dell'utente abilita la voce
+  document.addEventListener(
+    "click",
+    function unlockAudio() {
+      if ("speechSynthesis" in window) {
+        const silent = new SpeechSynthesisUtterance("");
+        window.speechSynthesis.speak(silent);
+      }
+      document.removeEventListener("click", unlockAudio);
+    },
+    { once: true }
+  );
+
+  // Gestione impostazione voce (salvataggio locale)
+  const voicePref = localStorage.getItem("voiceEnabled");
+  ui.voiceToggle.checked = voicePref === null ? true : JSON.parse(voicePref);
+  ui.voiceToggle.addEventListener("change", () => {
+    localStorage.setItem("voiceEnabled", ui.voiceToggle.checked);
+    if (!ui.voiceToggle.checked) window.speechSynthesis.cancel();
+  });
+
+  // Pulsante attivazione notifiche (per iOS PWA)
+  setupNotificationButton();
+}
+
+function setupNotificationButton() {
   if ("Notification" in window && Notification.permission !== "granted") {
-    // Creiamo un pulsante temporaneo o aspettiamo un'interazione utente
-    // Nota: iOS richiede un tocco utente per chiedere il permesso
     const notifBtn = document.createElement("button");
-    notifBtn.textContent = "🔔 Attiva Notifiche";
+    notifBtn.textContent = "🔔 Attiva Notifiche iPhone";
     notifBtn.className = "action-btn";
-    notifBtn.style.marginTop = "10px";
     notifBtn.style.backgroundColor = "#ffc107";
     notifBtn.onclick = () => {
       Notification.requestPermission().then((permission) => {
         if (permission === "granted") {
           notifBtn.remove();
-          alert("Notifiche attivate! Riceverai il prossimo indirizzo.");
+          alert("Notifiche attivate correttamente!");
         }
       });
     };
-    // Aggiungiamo il bottone al menu laterale
     document.querySelector(".sidebar-content").appendChild(notifBtn);
   }
 }
 
+// === LOGICA ZONE ===
 function loadZone(zoneName) {
   currentZoneName = zoneName;
   localStorage.setItem("lastZone", zoneName);
   ui.title.textContent = zoneName;
-  ui.zoneBtns.forEach((btn) => {
-    btn.classList.toggle("active", btn.textContent.includes(zoneName));
-  });
+  ui.zoneBtns.forEach((btn) =>
+    btn.classList.toggle("active", btn.textContent.includes(zoneName))
+  );
   const savedData = localStorage.getItem(`deliveries_${zoneName}`);
   deliveries = savedData ? JSON.parse(savedData) : [];
   populateSelect();
@@ -559,9 +583,7 @@ function loadZone(zoneName) {
 }
 
 function switchZone(zoneName) {
-  if (confirm(`Passare a ${zoneName}?`)) {
-    loadZone(zoneName);
-  }
+  if (confirm(`Passare a ${zoneName}?`)) loadZone(zoneName);
 }
 
 function clearZone() {
@@ -586,11 +608,12 @@ function populateSelect() {
   });
 }
 
+// === AGGIUNTA E VALIDAZIONE ===
 function addDelivery() {
   const street = ui.select.value;
   const civico = ui.input.value.trim();
-  if (!street) return alert("Seleziona una via!");
-  if (!civico) return alert("Inserisci il civico!");
+  if (!street || !civico) return;
+
   const isValid = checkCivico(street, civico);
   const newDelivery = {
     street,
@@ -610,38 +633,28 @@ function addDelivery() {
 function checkCivico(streetName, civicoVal) {
   const routes = DB_ZONE[currentZoneName];
   const streetData = routes.filter((r) => r.street === streetName);
-  if (streetData.length === 0) return false;
   return streetData.some((entry) => entry.civici.includes(civicoVal));
 }
 
 function sortDeliveries() {
   const routeOrder = DB_ZONE[currentZoneName];
-  deliveries.sort((a, b) => {
-    const idxA = getOrderIndex(a, routeOrder);
-    const idxB = getOrderIndex(b, routeOrder);
-    return idxA - idxB;
-  });
+  deliveries.sort(
+    (a, b) => getOrderIndex(a, routeOrder) - getOrderIndex(b, routeOrder)
+  );
 }
 
 function getOrderIndex(delivery, routeRef) {
   for (let i = 0; i < routeRef.length; i++) {
-    const entry = routeRef[i];
-    if (entry.street === delivery.street) {
-      const civIndex = entry.civici.indexOf(delivery.civico);
-      if (civIndex !== -1) {
-        return i * 1000 + civIndex;
-      }
+    if (routeRef[i].street === delivery.street) {
+      const civIndex = routeRef[i].civici.indexOf(delivery.civico);
+      if (civIndex !== -1) return i * 1000 + civIndex;
     }
   }
-  const streetGenericIndex = routeRef.findIndex(
-    (r) => r.street === delivery.street
-  );
-  if (streetGenericIndex !== -1) {
-    return streetGenericIndex * 1000 + 999;
-  }
-  return 999999;
+  const sIdx = routeRef.findIndex((r) => r.street === delivery.street);
+  return sIdx !== -1 ? sIdx * 1000 + 999 : 999999;
 }
 
+// === RENDERING E NOTIFICHE ===
 function renderList() {
   ui.list.innerHTML = "";
   deliveries.forEach((item, index) => {
@@ -649,76 +662,71 @@ function renderList() {
     card.className = `delivery-card ${item.completed ? "completed" : ""} ${
       !item.isValid ? "error-card" : ""
     }`;
-    let icon = item.completed ? "↩️" : "✅";
-    let warning = !item.isValid
-      ? '<span style="color:#dc3545; font-size:12px; display:block;">⚠️ Civico sconosciuto</span>'
-      : "";
     card.innerHTML = `
             <div class="delivery-info">
                 <span class="delivery-street">${item.street}</span>
                 <span class="delivery-number">${item.civico}</span>
-                ${warning}
+                ${
+                  !item.isValid
+                    ? '<span style="color:#dc3545; font-size:12px;">⚠️ Civico ignoto</span>'
+                    : ""
+                }
             </div>
-            <button class="status-btn" onclick="toggleComplete(${index})">${icon}</button>
+            <button class="status-btn" onclick="toggleComplete(${index})">${
+      item.completed ? "↩️" : "✅"
+    }</button>
         `;
     ui.list.appendChild(card);
   });
 }
 
 function toggleComplete(index) {
+  // Svuota coda audio precedente (necessario per iOS)
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+
   const item = deliveries[index];
+  item.completed = !item.completed;
+  saveData();
+  renderList();
 
-  // Se stiamo segnando come COMPLETATO (non annullando)
-  if (!item.completed) {
-    item.completed = true;
-    saveData();
-    renderList();
-
-    // Cerca il prossimo pacco
-    trovaEAvvisaProssimo();
-  } else {
-    // Se stiamo annullando (tornando indietro)
-    item.completed = false;
-    saveData();
-    renderList();
+  if (item.completed) {
+    // Breve ritardo per stabilità iOS
+    setTimeout(trovaEAvvisaProssimo, 200);
   }
 }
 
-// === NUOVA FUNZIONE PER NOTIFICHE E VOCE ===
 function trovaEAvvisaProssimo() {
-  // Trova il primo elemento NON completato nella lista
   const prossimo = deliveries.find((d) => !d.completed);
+  const isVoiceEnabled = ui.voiceToggle.checked;
 
   if (prossimo) {
-    const testoAvviso = `Prossima fermata: ${prossimo.street} ${prossimo.civico}`;
+    const msg = `Prossimo: ${prossimo.street} ${prossimo.civico}`;
 
-    // 1. Notifica Push
+    // Notifica Push
     if (Notification.permission === "granted") {
-      new Notification("📦 Prossimo Pacco", {
-        body: testoAvviso,
-        icon: "https://cdn-icons-png.flaticon.com/512/2921/2921822.png", // Icona pacco generica
-        tag: "delivery-next", // Sovrascrive la notifica precedente per non intasare
+      new Notification("📦 Prossima Consegna", {
+        body: msg,
+        tag: "next-deliv",
       });
     }
 
-    // 2. Sintesi Vocale (Parla al telefono)
-    if ("speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(testoAvviso);
-      utterance.lang = "it-IT"; // Italiano
-      utterance.rate = 1.1; // Leggermente più veloce
-      window.speechSynthesis.speak(utterance);
+    // Voce
+    if (isVoiceEnabled && "speechSynthesis" in window) {
+      const utter = new SpeechSynthesisUtterance(msg);
+      utter.lang = "it-IT";
+      utter.rate = 1.0;
+      window.speechSynthesis.speak(utter);
     }
   } else {
-    // Percorso finito
-    if ("speechSynthesis" in window) {
-      const fine = new SpeechSynthesisUtterance(
-        "Giro completato. Ottimo lavoro!"
+    if (isVoiceEnabled && "speechSynthesis" in window) {
+      window.speechSynthesis.speak(
+        new SpeechSynthesisUtterance("Giro completato!")
       );
-      window.speechSynthesis.speak(fine);
     }
   }
 }
 
+// === UTILS ===
 function saveData() {
   localStorage.setItem(
     `deliveries_${currentZoneName}`,
@@ -726,16 +734,11 @@ function saveData() {
   );
 }
 
-function toggleSidebar(forceState) {
+function toggleSidebar(state) {
   const isOpen = ui.sidebar.classList.contains("active");
-  const newState = forceState !== undefined ? forceState : !isOpen;
-  if (newState) {
-    ui.sidebar.classList.add("active");
-    ui.overlay.classList.add("active");
-  } else {
-    ui.sidebar.classList.remove("active");
-    ui.overlay.classList.remove("active");
-  }
+  const newState = state !== undefined ? state : !isOpen;
+  ui.sidebar.classList.toggle("active", newState);
+  ui.overlay.classList.toggle("active", newState);
 }
 
 function printList() {
