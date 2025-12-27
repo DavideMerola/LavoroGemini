@@ -1,0 +1,2 @@
+# LavoroGemini
+work Gemini
