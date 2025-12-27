@@ -516,67 +516,84 @@ const ui = {
   voiceToggle: document.getElementById("voiceToggle"),
 };
 
-// === INIZIALIZZAZIONE ===
-function init() {
+// === INIZIALIZZAZIONE CON SERVICE WORKER ===
+async function init() {
   loadZone(currentZoneName);
   ui.addBtn.addEventListener("click", addDelivery);
   ui.input.addEventListener("keypress", (e) => {
     if (e.key === "Enter") addDelivery();
   });
 
-  // Sblocco audio per iOS: la prima interazione dell'utente abilita la voce
+  // Registra il Service Worker (Obbligatorio per notifiche serie su iOS)
+  if ("serviceWorker" in navigator) {
+    try {
+      await navigator.serviceWorker.register("sw.js");
+      console.log("Service Worker Registrato");
+    } catch (e) {
+      console.log("Errore SW:", e);
+    }
+  }
+
   document.addEventListener(
     "click",
-    function unlockAudio() {
+    () => {
       if ("speechSynthesis" in window) {
-        const silent = new SpeechSynthesisUtterance("");
-        window.speechSynthesis.speak(silent);
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
       }
-      document.removeEventListener("click", unlockAudio);
     },
     { once: true }
   );
 
-  // Gestione impostazione voce (salvataggio locale)
-  const voicePref = localStorage.getItem("voiceEnabled");
-  ui.voiceToggle.checked = voicePref === null ? true : JSON.parse(voicePref);
-  ui.voiceToggle.addEventListener("change", () => {
-    localStorage.setItem("voiceEnabled", ui.voiceToggle.checked);
-    if (!ui.voiceToggle.checked) window.speechSynthesis.cancel();
-  });
+  const vPref = localStorage.getItem("voiceEnabled");
+  ui.voiceToggle.checked = vPref === null ? true : JSON.parse(vPref);
+  ui.voiceToggle.addEventListener("change", () =>
+    localStorage.setItem("voiceEnabled", ui.voiceToggle.checked)
+  );
 
-  // Pulsante attivazione notifiche (per iOS PWA)
   setupNotificationButton();
 }
 
 function setupNotificationButton() {
   if ("Notification" in window && Notification.permission !== "granted") {
-    const notifBtn = document.createElement("button");
-    notifBtn.textContent = "🔔 Attiva Notifiche iPhone";
-    notifBtn.className = "action-btn";
-    notifBtn.style.backgroundColor = "#ffc107";
-    notifBtn.onclick = () => {
-      Notification.requestPermission().then((permission) => {
-        if (permission === "granted") {
-          notifBtn.remove();
-          alert("Notifiche attivate correttamente!");
+    const btn = document.createElement("button");
+    btn.textContent = "🔔 ATTIVA NOTIFICHE WATCH";
+    btn.className = "action-btn";
+    btn.style.backgroundColor = "#ffc107";
+    btn.onclick = () => {
+      Notification.requestPermission().then((p) => {
+        if (p === "granted") {
+          btn.remove();
+          inviaNotificaAlSW("Sistema Pronto", "Riceverai i civici qui");
         }
       });
     };
-    document.querySelector(".sidebar-content").appendChild(notifBtn);
+    document.querySelector(".sidebar-content").appendChild(btn);
   }
 }
 
-// === LOGICA ZONE ===
+// === FUNZIONE CHIAVE PER IL WATCH ===
+function inviaNotificaAlSW(titolo, messaggio) {
+  if (navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: "SHOW_NOTIFICATION",
+      title: titolo,
+      body: messaggio,
+    });
+  } else {
+    // Fallback se il SW non è ancora pronto
+    new Notification(titolo, { body: messaggio });
+  }
+}
+
 function loadZone(zoneName) {
   currentZoneName = zoneName;
   localStorage.setItem("lastZone", zoneName);
   ui.title.textContent = zoneName;
-  ui.zoneBtns.forEach((btn) =>
-    btn.classList.toggle("active", btn.textContent.includes(zoneName))
+  ui.zoneBtns.forEach((b) =>
+    b.classList.toggle("active", b.textContent.includes(zoneName))
   );
-  const savedData = localStorage.getItem(`deliveries_${zoneName}`);
-  deliveries = savedData ? JSON.parse(savedData) : [];
+  const data = localStorage.getItem(`deliveries_${zoneName}`);
+  deliveries = data ? JSON.parse(data) : [];
   populateSelect();
   renderList();
   toggleSidebar(false);
@@ -586,43 +603,28 @@ function switchZone(zoneName) {
   if (confirm(`Passare a ${zoneName}?`)) loadZone(zoneName);
 }
 
-function clearZone() {
-  if (confirm(`Cancellare tutte le consegne di ${currentZoneName}?`)) {
-    deliveries = [];
-    saveData();
-    renderList();
-    toggleSidebar(false);
-  }
-}
-
 function populateSelect() {
-  const routes = DB_ZONE[currentZoneName];
-  const streetNames = [...new Set(routes.map((r) => r.street))].sort();
+  const streets = [
+    ...new Set(DB_ZONE[currentZoneName].map((r) => r.street)),
+  ].sort();
   ui.select.innerHTML =
     '<option value="" disabled selected>Seleziona Via...</option>';
-  streetNames.forEach((street) => {
-    const opt = document.createElement("option");
-    opt.value = street;
-    opt.textContent = street;
-    ui.select.appendChild(opt);
+  streets.forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s;
+    o.textContent = s;
+    ui.select.appendChild(o);
   });
 }
 
-// === AGGIUNTA E VALIDAZIONE ===
 function addDelivery() {
   const street = ui.select.value;
-  const civico = ui.input.value.trim();
+  const civico = ui.input.value.trim().toUpperCase();
   if (!street || !civico) return;
-
-  const isValid = checkCivico(street, civico);
-  const newDelivery = {
-    street,
-    civico,
-    isValid,
-    completed: false,
-    timestamp: Date.now(),
-  };
-  deliveries.push(newDelivery);
+  const isValid = DB_ZONE[currentZoneName]
+    .filter((r) => r.street === street)
+    .some((e) => e.civici.includes(civico));
+  deliveries.push({ street, civico, isValid, completed: false });
   sortDeliveries();
   saveData();
   renderList();
@@ -630,124 +632,96 @@ function addDelivery() {
   ui.input.focus();
 }
 
-function checkCivico(streetName, civicoVal) {
-  const routes = DB_ZONE[currentZoneName];
-  const streetData = routes.filter((r) => r.street === streetName);
-  return streetData.some((entry) => entry.civici.includes(civicoVal));
-}
-
 function sortDeliveries() {
-  const routeOrder = DB_ZONE[currentZoneName];
-  deliveries.sort(
-    (a, b) => getOrderIndex(a, routeOrder) - getOrderIndex(b, routeOrder)
-  );
+  const ref = DB_ZONE[currentZoneName];
+  deliveries.sort((a, b) => getIdx(a, ref) - getIdx(b, ref));
 }
 
-function getOrderIndex(delivery, routeRef) {
-  for (let i = 0; i < routeRef.length; i++) {
-    if (routeRef[i].street === delivery.street) {
-      const civIndex = routeRef[i].civici.indexOf(delivery.civico);
-      if (civIndex !== -1) return i * 1000 + civIndex;
+function getIdx(del, ref) {
+  for (let i = 0; i < ref.length; i++) {
+    if (ref[i].street === del.street) {
+      const ci = ref[i].civici.indexOf(del.civico);
+      return ci !== -1 ? i * 1000 + ci : i * 1000 + 999;
     }
   }
-  const sIdx = routeRef.findIndex((r) => r.street === delivery.street);
-  return sIdx !== -1 ? sIdx * 1000 + 999 : 999999;
+  return 999999;
 }
 
-// === RENDERING E NOTIFICHE ===
 function renderList() {
   ui.list.innerHTML = "";
-  deliveries.forEach((item, index) => {
-    const card = document.createElement("div");
-    card.className = `delivery-card ${item.completed ? "completed" : ""} ${
-      !item.isValid ? "error-card" : ""
+  deliveries.forEach((it, i) => {
+    const div = document.createElement("div");
+    div.className = `delivery-card ${it.completed ? "completed" : ""} ${
+      !it.isValid ? "error-card" : ""
     }`;
-    card.innerHTML = `
+    div.innerHTML = `
             <div class="delivery-info">
-                <span class="delivery-street">${item.street}</span>
-                <span class="delivery-number">${item.civico}</span>
-                ${
-                  !item.isValid
-                    ? '<span style="color:#dc3545; font-size:12px;">⚠️ Civico ignoto</span>'
-                    : ""
-                }
+                <span class="delivery-street">${it.street}</span>
+                <span class="delivery-number">${it.civico}</span>
             </div>
-            <button class="status-btn" onclick="toggleComplete(${index})">${
-      item.completed ? "↩️" : "✅"
+            <button class="status-btn" onclick="toggleComplete(${i})">${
+      it.completed ? "↩️" : "✅"
     }</button>
         `;
-    ui.list.appendChild(card);
+    ui.list.appendChild(div);
   });
 }
 
 function toggleComplete(index) {
-  // Svuota coda audio precedente (necessario per iOS)
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-
-  const item = deliveries[index];
-  item.completed = !item.completed;
+  deliveries[index].completed = !deliveries[index].completed;
   saveData();
   renderList();
-
-  if (item.completed) {
-    // Breve ritardo per stabilità iOS
-    setTimeout(trovaEAvvisaProssimo, 200);
+  if (deliveries[index].completed) {
+    trovaEAvvisaProssimo();
   }
 }
 
 function trovaEAvvisaProssimo() {
-    // Trova il prossimo pacco da consegnare
-    const prossimo = deliveries.find(d => !d.completed);
-    const isVoiceEnabled = ui.voiceToggle.checked;
+  const prossimo = deliveries.find((d) => !d.completed);
+  if (prossimo) {
+    const msg = `${prossimo.street} ${prossimo.civico}`;
 
-    if (prossimo) {
-        const msg = `${prossimo.street} ${prossimo.civico}`;
-        
-        // --- NOTIFICA CON RITARDO DI 3 SECONDI ---
-        setTimeout(() => {
-            if (Notification.permission === "granted") {
-                new Notification("📦 Prossimo:", { 
-                    body: msg,
-                    tag: "delivery-update", // Sostituisce la vecchia notifica
-                    renotify: true,
-                    silent: false
-                });
-            }
-        }, 3000); // 3000ms = 3 secondi
-
-        // --- VOCE (Puoi decidere se farla parlare subito o dopo) ---
-        // In questo esempio la voce parla subito appena clicchi
-        if (isVoiceEnabled && 'speechSynthesis' in window) {
-            const utter = new SpeechSynthesisUtterance(msg);
-            utter.lang = 'it-IT';
-            window.speechSynthesis.speak(utter);
-        }
-    } else {
-        // Fine del giro
-        if (isVoiceEnabled && 'speechSynthesis' in window) {
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance("Giro completato!"));
-        }
+    // Invia notifica tramite Service Worker (Molto più stabile per il Watch)
+    if (Notification.permission === "granted") {
+      inviaNotificaAlSW("📦 " + prossimo.civico, prossimo.street);
     }
+
+    if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+      const utter = new SpeechSynthesisUtterance(msg);
+      utter.lang = "it-IT";
+      window.speechSynthesis.speak(utter);
+    }
+  } else {
+    if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+      window.speechSynthesis.speak(
+        new SpeechSynthesisUtterance("Giro completato")
+      );
+    }
+  }
 }
 
-// === UTILS ===
 function saveData() {
   localStorage.setItem(
     `deliveries_${currentZoneName}`,
     JSON.stringify(deliveries)
   );
 }
-
-function toggleSidebar(state) {
-  const isOpen = ui.sidebar.classList.contains("active");
-  const newState = state !== undefined ? state : !isOpen;
-  ui.sidebar.classList.toggle("active", newState);
-  ui.overlay.classList.toggle("active", newState);
+function toggleSidebar(s) {
+  const open = s !== undefined ? s : !ui.sidebar.classList.contains("active");
+  ui.sidebar.classList.toggle("active", open);
+  ui.overlay.classList.toggle("active", open);
 }
-
+function clearZone() {
+  if (confirm("Svuotare tutto?")) {
+    deliveries = [];
+    saveData();
+    renderList();
+    toggleSidebar(false);
+  }
+}
 function printList() {
   window.print();
 }
 
 init();
-
