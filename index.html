@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Delivery App</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+      <h1 id="pageTitle">Zona A</h1>
+      <div style="width: 30px"></div>
+    </header>
+
+    <div
+      class="sidebar-overlay"
+      id="sidebar-overlay"
+      onclick="toggleSidebar()"
+    ></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">Menu Gestione</div>
+      <div class="sidebar-content">
+        <h3>Seleziona Zona</h3>
+        <div class="zone-selector">
+          <button class="zone-btn active" onclick="switchZone('Zona A')">
+            Zona A (Predefinita)
+          </button>
+          <button class="zone-btn" onclick="switchZone('Zona B')">
+            Zona B (Esempio)
+          </button>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0" />
+
+        <button class="action-btn" onclick="printList()">
+          🖨️ Stampa Lista
+        </button>
+        <button
+          class="action-btn"
+          onclick="clearZone()"
+          style="color: var(--danger); border-color: var(--danger)"
+        >
+          🗑️ Svuota Zona Corrente
+        </button>
+      </div>
+    </aside>
+
+    <div class="input-area">
+      <div class="row">
+        <select id="streetSelect">
+          <option value="" disabled selected>Seleziona Via...</option>
+        </select>
+        <input
+          type="text"
+          id="civicoInput"
+          inputmode="numeric"
+          placeholder="N°"
+          autocomplete="off"
+        />
+      </div>
+      <button id="addBtn">AGGIUNGI PACCO</button>
+    </div>
+
+    <div class="list-container">
+      <div id="deliveryList"></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
