@@ -7,6 +7,18 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title>Delivery App</title>
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="Delivery App" />
+
+    <link rel="apple-touch-icon" href="icon-192.png" />
+
+    <link rel="manifest" href="manifest.json" />
+
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -35,16 +47,17 @@
           </button>
         </div>
 
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0" />
+        <div class="voice-option-container">
+          <label for="voiceToggle">🔊 Leggi prossimo pacco</label>
+          <input type="checkbox" id="voiceToggle" checked />
+        </div>
+
+        <hr class="separator" />
 
         <button class="action-btn" onclick="printList()">
           🖨️ Stampa Lista
         </button>
-        <button
-          class="action-btn"
-          onclick="clearZone()"
-          style="color: var(--danger); border-color: var(--danger)"
-        >
+        <button class="action-btn clear-btn" onclick="clearZone()">
           🗑️ Svuota Zona Corrente
         </button>
       </div>
