@@ -277,3 +277,25 @@ input {
         page-break-inside: avoid;
     }
 }
+
+.voice-option-container {
+    margin-top: 20px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid #ddd;
+}
+
+.separator {
+    border: 0;
+    border-top: 1px solid #eee;
+    margin: 20px 0;
+}
+
+.clear-btn {
+    color: var(--danger);
+    border-color: var(--danger) !important;
+}
