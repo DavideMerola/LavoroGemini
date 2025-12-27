@@ -696,34 +696,38 @@ function toggleComplete(index) {
 }
 
 function trovaEAvvisaProssimo() {
-  const prossimo = deliveries.find((d) => !d.completed);
-  const isVoiceEnabled = ui.voiceToggle.checked;
+    // Trova il prossimo pacco da consegnare
+    const prossimo = deliveries.find(d => !d.completed);
+    const isVoiceEnabled = ui.voiceToggle.checked;
 
-  if (prossimo) {
-    const msg = `Prossimo: ${prossimo.street} ${prossimo.civico}`;
+    if (prossimo) {
+        const msg = `${prossimo.street} ${prossimo.civico}`;
+        
+        // --- NOTIFICA CON RITARDO DI 3 SECONDI ---
+        setTimeout(() => {
+            if (Notification.permission === "granted") {
+                new Notification("📦 Prossimo:", { 
+                    body: msg,
+                    tag: "delivery-update", // Sostituisce la vecchia notifica
+                    renotify: true,
+                    silent: false
+                });
+            }
+        }, 3000); // 3000ms = 3 secondi
 
-    // Notifica Push
-    if (Notification.permission === "granted") {
-      new Notification("📦 Prossima Consegna", {
-        body: msg,
-        tag: "next-deliv",
-      });
+        // --- VOCE (Puoi decidere se farla parlare subito o dopo) ---
+        // In questo esempio la voce parla subito appena clicchi
+        if (isVoiceEnabled && 'speechSynthesis' in window) {
+            const utter = new SpeechSynthesisUtterance(msg);
+            utter.lang = 'it-IT';
+            window.speechSynthesis.speak(utter);
+        }
+    } else {
+        // Fine del giro
+        if (isVoiceEnabled && 'speechSynthesis' in window) {
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance("Giro completato!"));
+        }
     }
-
-    // Voce
-    if (isVoiceEnabled && "speechSynthesis" in window) {
-      const utter = new SpeechSynthesisUtterance(msg);
-      utter.lang = "it-IT";
-      utter.rate = 1.0;
-      window.speechSynthesis.speak(utter);
-    }
-  } else {
-    if (isVoiceEnabled && "speechSynthesis" in window) {
-      window.speechSynthesis.speak(
-        new SpeechSynthesisUtterance("Giro completato!")
-      );
-    }
-  }
 }
 
 // === UTILS ===
@@ -746,3 +750,4 @@ function printList() {
 }
 
 init();
+
