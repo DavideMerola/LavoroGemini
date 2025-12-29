@@ -500,6 +500,9 @@ const DB_ZONE = {
   ],
 };
 
+// Aggiungi questa variabile all'inizio del file
+let audioSilenzioso = new Audio();
+
 // --- STATO APPLICAZIONE ---
 let currentZoneName = localStorage.getItem("lastZone") || "Zona A";
 let deliveries = [];
@@ -619,7 +622,7 @@ function populateSelect() {
 
 function addDelivery() {
   const street = ui.select.value;
-  const civico = ui.input.value.trim().toUpperCase();
+  const civico = ui.input.value.trim();
   if (!street || !civico) return;
   const isValid = DB_ZONE[currentZoneName]
     .filter((r) => r.street === street)
@@ -677,26 +680,61 @@ function toggleComplete(index) {
   }
 }
 
+// function trovaEAvvisaProssimo() {
+//   const prossimo = deliveries.find((d) => !d.completed);
+//   if (prossimo) {
+//     const msg = `${prossimo.street} ${prossimo.civico}`;
+
+//     // Invia notifica tramite Service Worker (Molto più stabile per il Watch)
+//     if (Notification.permission === "granted") {
+//       inviaNotificaAlSW("📦 " + prossimo.civico, prossimo.street);
+//     }
+
+//     if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+//       const utter = new SpeechSynthesisUtterance(msg);
+//       utter.lang = "it-IT";
+//       window.speechSynthesis.speak(utter);
+//     }
+//   } else {
+//     if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+//       window.speechSynthesis.speak(
+//         new SpeechSynthesisUtterance("Giro completato")
+//       );
+//     }
+//   }
+// }
+
+// MODIFICA la funzione trovaEAvvisaProssimo con il trucco "Musica"
 function trovaEAvvisaProssimo() {
   const prossimo = deliveries.find((d) => !d.completed);
   if (prossimo) {
-    const msg = `${prossimo.street} ${prossimo.civico}`;
+    const infoPerWatch = `📦 ${prossimo.civico} - ${prossimo.street}`;
 
-    // Invia notifica tramite Service Worker (Molto più stabile per il Watch)
-    if (Notification.permission === "granted") {
-      inviaNotificaAlSW("📦 " + prossimo.civico, prossimo.street);
+    // TRUCCO STATO ATTIVITÀ (In riproduzione)
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: infoPerWatch,
+        artist: "Prossima Consegna",
+        album: currentZoneName,
+        artwork: [{ src: "icon-192.png", sizes: "192x192", type: "image/png" }],
+      });
+
+      // Avviamo un brevissimo silenzio per "svegliare" il widget sul Watch
+      // Nota: serve un file audio anche di 1 secondo di silenzio totale
+      audioSilenzioso.src =
+        "https://github.com/anars/blank-audio/raw/master/10-seconds-of-silence.mp3";
+      audioSilenzioso
+        .play()
+        .catch((e) => console.log("Play bloccato, serve tocco utente"));
     }
 
+    // Sintesi vocale (Voce)
     if (ui.voiceToggle.checked && "speechSynthesis" in window) {
-      const utter = new SpeechSynthesisUtterance(msg);
+      const utter = new SpeechSynthesisUtterance(
+        `${prossimo.street} ${prossimo.civico}`
+      );
       utter.lang = "it-IT";
       window.speechSynthesis.speak(utter);
-    }
-  } else {
-    if (ui.voiceToggle.checked && "speechSynthesis" in window) {
-      window.speechSynthesis.speak(
-        new SpeechSynthesisUtterance("Giro completato")
-      );
     }
   }
 }
