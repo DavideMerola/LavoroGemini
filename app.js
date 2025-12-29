@@ -500,176 +500,284 @@ const DB_ZONE = {
   ],
 };
 
+// Aggiungi questa variabile all'inizio del file
+let audioSilenzioso = new Audio();
+
+// --- STATO APPLICAZIONE ---
 let currentZoneName = localStorage.getItem("lastZone") || "Zona A";
 let deliveries = [];
-let audioSilenzioso = new Audio("https://github.com/anars/blank-audio/raw/master/10-seconds-of-silence.mp3");
-audioSilenzioso.loop = true; // Lo teniamo in loop così il widget non sparisce
 
 const ui = {
-    title: document.getElementById('pageTitle'),
-    sidebar: document.getElementById('sidebar'),
-    overlay: document.getElementById('sidebar-overlay'),
-    select: document.getElementById('streetSelect'),
-    input: document.getElementById('civicoInput'),
-    list: document.getElementById('deliveryList'),
-    addBtn: document.getElementById('addBtn'),
-    zoneBtns: document.querySelectorAll('.zone-btn'),
-    voiceToggle: document.getElementById('voiceToggle')
+  title: document.getElementById("pageTitle"),
+  sidebar: document.getElementById("sidebar"),
+  overlay: document.getElementById("sidebar-overlay"),
+  select: document.getElementById("streetSelect"),
+  input: document.getElementById("civicoInput"),
+  pacchiInput: document.getElementById("pacchiInput"),
+  list: document.getElementById("deliveryList"),
+  addBtn: document.getElementById("addBtn"),
+  zoneBtns: document.querySelectorAll(".zone-btn"),
+  voiceToggle: document.getElementById("voiceToggle"),
 };
 
-// === INIZIALIZZAZIONE ===
-function init() {
-    loadZone(currentZoneName);
-    ui.addBtn.addEventListener('click', addDelivery);
-    ui.input.addEventListener('keypress', (e) => { if(e.key === 'Enter') addDelivery(); });
+// === INIZIALIZZAZIONE CON SERVICE WORKER ===
+async function init() {
+  loadZone(currentZoneName);
+  ui.addBtn.addEventListener("click", addDelivery);
+  ui.input.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") addDelivery();
+  });
 
-    // Sblocco audio e permessi Media al primo tocco
-    document.addEventListener('click', () => {
-        audioSilenzioso.play().then(() => audioSilenzioso.pause());
-    }, { once: true });
-
-    // Configurazione tasti Apple Watch (Media Session)
-    if ('mediaSession' in navigator) {
-        // Quando premi "Avanti" sull'Apple Watch
-        navigator.mediaSession.setActionHandler('nexttrack', () => {
-            completamentoRemoto();
-        });
-        // Quando premi "Play" o "Pausa" (opzionale, lo usiamo come backup)
-        navigator.mediaSession.setActionHandler('play', () => {
-            audioSilenzioso.play();
-            trovaEAvvisaProssimo();
-        });
+  // Registra il Service Worker (Obbligatorio per notifiche serie su iOS)
+  if ("serviceWorker" in navigator) {
+    try {
+      await navigator.serviceWorker.register("sw.js");
+      console.log("Service Worker Registrato");
+    } catch (e) {
+      console.log("Errore SW:", e);
     }
+  }
 
-    const vPref = localStorage.getItem('voiceEnabled');
-    ui.voiceToggle.checked = vPref === null ? true : JSON.parse(vPref);
-    ui.voiceToggle.addEventListener('change', () => localStorage.setItem('voiceEnabled', ui.voiceToggle.checked));
+  document.addEventListener(
+    "click",
+    () => {
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      }
+    },
+    { once: true }
+  );
+
+  const vPref = localStorage.getItem("voiceEnabled");
+  ui.voiceToggle.checked = vPref === null ? true : JSON.parse(vPref);
+  ui.voiceToggle.addEventListener("change", () =>
+    localStorage.setItem("voiceEnabled", ui.voiceToggle.checked)
+  );
+
+  setupNotificationButton();
 }
 
-// Funzione chiamata dal tasto "Avanti" dell'Apple Watch
-function completamentoRemoto() {
-    const indiceProssimo = deliveries.findIndex(d => !d.completed);
-    if (indiceProssimo !== -1) {
-        toggleComplete(indiceProssimo);
-    }
+function setupNotificationButton() {
+  if ("Notification" in window && Notification.permission !== "granted") {
+    const btn = document.createElement("button");
+    btn.textContent = "🔔 ATTIVA NOTIFICHE WATCH";
+    btn.className = "action-btn";
+    btn.style.backgroundColor = "#ffc107";
+    btn.onclick = () => {
+      Notification.requestPermission().then((p) => {
+        if (p === "granted") {
+          btn.remove();
+          inviaNotificaAlSW("Sistema Pronto", "Riceverai i civici qui");
+        }
+      });
+    };
+    document.querySelector(".sidebar-content").appendChild(btn);
+  }
+}
+
+// === FUNZIONE CHIAVE PER IL WATCH ===
+function inviaNotificaAlSW(titolo, messaggio) {
+  if (navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: "SHOW_NOTIFICATION",
+      title: titolo,
+      body: messaggio,
+    });
+  } else {
+    // Fallback se il SW non è ancora pronto
+    new Notification(titolo, { body: messaggio });
+  }
 }
 
 function loadZone(zoneName) {
-    currentZoneName = zoneName;
-    localStorage.setItem("lastZone", zoneName);
-    ui.title.textContent = zoneName;
-    const data = localStorage.getItem(`deliveries_${zoneName}`);
-    deliveries = data ? JSON.parse(data) : [];
-    populateSelect();
-    renderList();
-    toggleSidebar(false);
+  currentZoneName = zoneName;
+  localStorage.setItem("lastZone", zoneName);
+  ui.title.textContent = zoneName;
+  ui.zoneBtns.forEach((b) =>
+    b.classList.toggle("active", b.textContent.includes(zoneName))
+  );
+  const data = localStorage.getItem(`deliveries_${zoneName}`);
+  deliveries = data ? JSON.parse(data) : [];
+  populateSelect();
+  renderList();
+  toggleSidebar(false);
+}
+
+function switchZone(zoneName) {
+  if (confirm(`Passare a ${zoneName}?`)) loadZone(zoneName);
 }
 
 function populateSelect() {
-    const streets = [...new Set(DB_ZONE[currentZoneName].map(r => r.street))].sort();
-    ui.select.innerHTML = '<option value="" disabled selected>Seleziona Via...</option>';
-    streets.forEach(s => {
-        const o = document.createElement('option');
-        o.value = s; o.textContent = s;
-        ui.select.appendChild(o);
-    });
+  const streets = [
+    ...new Set(DB_ZONE[currentZoneName].map((r) => r.street)),
+  ].sort();
+  ui.select.innerHTML =
+    '<option value="" disabled selected>Seleziona Via...</option>';
+  streets.forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s;
+    o.textContent = s;
+    ui.select.appendChild(o);
+  });
 }
 
-// Gestione Lettere Minuscole
 function addDelivery() {
-    const street = ui.select.value;
-    const civico = ui.input.value.trim(); // Accetta minuscole
-    if (!street || !civico) return;
+  const street = ui.select.value;
+  const civicoBase = ui.input.value.trim();
+  const qtaPacchi = ui.pacchiInput.value.trim();
 
-    const isValid = DB_ZONE[currentZoneName]
-        .filter(r => r.street === street)
-        .some(e => e.civici.some(c => c.toLowerCase() === civico.toLowerCase()));
+  if (!street || !civicoBase) return;
 
-    deliveries.push({ street, civico, isValid, completed: false });
-    sortDeliveries();
-    saveData();
-    renderList();
-    ui.input.value = ''; ui.input.focus();
+  // Uniamo civico e pacchi (es: "22t (3p)") solo se pacchi è pieno
+  const civicoDisplay = qtaPacchi
+    ? `${civicoBase} (${qtaPacchi}p)`
+    : civicoBase;
+
+  // Il controllo validità lo facciamo solo sul civico base (senza i pacchi)
+  const isValid = DB_ZONE[currentZoneName]
+    .filter((r) => r.street === street)
+    .some((e) =>
+      e.civici.some((c) => c.toLowerCase() === civicoBase.toLowerCase())
+    );
+
+  // Salviamo civicoDisplay nella lista
+  deliveries.push({ street, civico: civicoDisplay, isValid, completed: false });
+
+  sortDeliveries();
+  saveData();
+  renderList();
+
+  // Pulizia campi
+  ui.input.value = "";
+  ui.pacchiInput.value = ""; // Svuota anche i pacchi
+  ui.input.focus();
 }
 
 function sortDeliveries() {
-    const ref = DB_ZONE[currentZoneName];
-    deliveries.sort((a, b) => getIdx(a, ref) - getIdx(b, ref));
+  const ref = DB_ZONE[currentZoneName];
+  deliveries.sort((a, b) => getIdx(a, ref) - getIdx(b, ref));
 }
 
 function getIdx(del, ref) {
-    for(let i=0; i<ref.length; i++) {
-        if(ref[i].street === del.street) {
-            const ci = ref[i].civici.indexOf(del.civico.toLowerCase());
-            return ci !== -1 ? (i * 1000) + ci : (i * 1000) + 999;
-        }
+  for (let i = 0; i < ref.length; i++) {
+    if (ref[i].street === del.street) {
+      const ci = ref[i].civici.indexOf(del.civico);
+      return ci !== -1 ? i * 1000 + ci : i * 1000 + 999;
     }
-    return 999999;
+  }
+  return 999999;
 }
 
 function renderList() {
-    ui.list.innerHTML = '';
-    deliveries.forEach((it, i) => {
-        const div = document.createElement('div');
-        div.className = `delivery-card ${it.completed ? 'completed' : ''} ${!it.isValid ? 'error-card' : ''}`;
-        div.innerHTML = `
+  ui.list.innerHTML = "";
+  deliveries.forEach((it, i) => {
+    const div = document.createElement("div");
+    div.className = `delivery-card ${it.completed ? "completed" : ""} ${
+      !it.isValid ? "error-card" : ""
+    }`;
+    div.innerHTML = `
             <div class="delivery-info">
                 <span class="delivery-street">${it.street}</span>
                 <span class="delivery-number">${it.civico}</span>
             </div>
-            <button class="status-btn" onclick="toggleComplete(${i})">${it.completed ? '↩️' : '✅'}</button>
+            <button class="status-btn" onclick="toggleComplete(${i})">${
+      it.completed ? "↩️" : "✅"
+    }</button>
         `;
-        ui.list.appendChild(div);
-    });
+    ui.list.appendChild(div);
+  });
 }
 
 function toggleComplete(index) {
-    deliveries[index].completed = !deliveries[index].completed;
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  deliveries[index].completed = !deliveries[index].completed;
+  saveData();
+  renderList();
+  if (deliveries[index].completed) {
+    trovaEAvvisaProssimo();
+  }
+}
+
+// function trovaEAvvisaProssimo() {
+//   const prossimo = deliveries.find((d) => !d.completed);
+//   if (prossimo) {
+//     const msg = `${prossimo.street} ${prossimo.civico}`;
+
+//     // Invia notifica tramite Service Worker (Molto più stabile per il Watch)
+//     if (Notification.permission === "granted") {
+//       inviaNotificaAlSW("📦 " + prossimo.civico, prossimo.street);
+//     }
+
+//     if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+//       const utter = new SpeechSynthesisUtterance(msg);
+//       utter.lang = "it-IT";
+//       window.speechSynthesis.speak(utter);
+//     }
+//   } else {
+//     if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+//       window.speechSynthesis.speak(
+//         new SpeechSynthesisUtterance("Giro completato")
+//       );
+//     }
+//   }
+// }
+
+// MODIFICA la funzione trovaEAvvisaProssimo con il trucco "Musica"
+function trovaEAvvisaProssimo() {
+  const prossimo = deliveries.find((d) => !d.completed);
+  if (prossimo) {
+    const infoPerWatch = `📦 ${prossimo.civico} - ${prossimo.street}`;
+
+    // TRUCCO STATO ATTIVITÀ (In riproduzione)
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: infoPerWatch,
+        artist: "Prossima Consegna",
+        album: currentZoneName,
+        artwork: [{ src: "icon-192.png", sizes: "192x192", type: "image/png" }],
+      });
+
+      // Avviamo un brevissimo silenzio per "svegliare" il widget sul Watch
+      // Nota: serve un file audio anche di 1 secondo di silenzio totale
+      audioSilenzioso.src =
+        "https://github.com/anars/blank-audio/raw/master/10-seconds-of-silence.mp3";
+      audioSilenzioso
+        .play()
+        .catch((e) => console.log("Play bloccato, serve tocco utente"));
+    }
+
+    // Sintesi vocale (Voce)
+    if (ui.voiceToggle.checked && "speechSynthesis" in window) {
+      const utter = new SpeechSynthesisUtterance(
+        `${prossimo.street} ${prossimo.civico}`
+      );
+      utter.lang = "it-IT";
+      window.speechSynthesis.speak(utter);
+    }
+  }
+}
+
+function saveData() {
+  localStorage.setItem(
+    `deliveries_${currentZoneName}`,
+    JSON.stringify(deliveries)
+  );
+}
+function toggleSidebar(s) {
+  const open = s !== undefined ? s : !ui.sidebar.classList.contains("active");
+  ui.sidebar.classList.toggle("active", open);
+  ui.overlay.classList.toggle("active", open);
+}
+function clearZone() {
+  if (confirm("Svuotare tutto?")) {
+    deliveries = [];
     saveData();
     renderList();
-    if (deliveries[index].completed) {
-        trovaEAvvisaProssimo();
-    }
+    toggleSidebar(false);
+  }
 }
-
-function trovaEAvvisaProssimo() {
-    const prossimo = deliveries.find(d => !d.completed);
-    
-    if (prossimo) {
-        const infoWatch = `📦 ${prossimo.civico} - ${prossimo.street}`;
-        
-        // Aggiorna Widget Apple Watch
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-                title: infoWatch,
-                artist: 'Prossima Consegna',
-                album: currentZoneName,
-                artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
-            });
-            audioSilenzioso.play();
-        }
-
-        // Voce
-        if (ui.voiceToggle.checked && 'speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(`${prossimo.street} ${prossimo.civico}`);
-            utter.lang = 'it-IT';
-            window.speechSynthesis.speak(utter);
-        }
-    } else {
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.metadata = new MediaMetadata({ title: "Giro Completato! ✅" });
-            audioSilenzioso.pause();
-        }
-    }
+function printList() {
+  window.print();
 }
-
-function saveData() { localStorage.setItem(`deliveries_${currentZoneName}`, JSON.stringify(deliveries)); }
-function toggleSidebar(s) {
-    const open = s !== undefined ? s : !ui.sidebar.classList.contains('active');
-    ui.sidebar.classList.toggle('active', open);
-    ui.overlay.classList.toggle('active', open);
-}
-function clearZone() { if(confirm("Svuotare tutto?")) { deliveries = []; saveData(); renderList(); audioSilenzioso.pause(); } }
 
 init();
