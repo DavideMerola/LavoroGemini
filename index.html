@@ -68,20 +68,10 @@
         <select id="streetSelect">
           <option value="" disabled selected>Seleziona Via...</option>
         </select>
-        <input
-          type="text"
-          id="civicoInput"
-          placeholder="N°"
-          autocomplete="off"
-          autocapitalize="none"
-        />
-        <input
-          type="number"
-          id="pacchiInput"
-          placeholder="Pacchi"
-          style="width: 70px"
-          min="1"
-        />
+       <div class="input-group-row">
+    <input type="text" id="civicoInput" placeholder="N°" autocapitalize="none">
+    <input type="number" id="pacchiInput" placeholder="Pz" min="1">
+</div>
       </div>
       <button id="addBtn">AGGIUNGI PACCO</button>
     </div>
@@ -93,3 +83,4 @@
     <script src="app.js"></script>
   </body>
 </html>
+
