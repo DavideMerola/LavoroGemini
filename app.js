@@ -500,3 +500,176 @@ const DB_ZONE = {
   ],
 };
 
+let currentZoneName = localStorage.getItem("lastZone") || "Zona A";
+let deliveries = [];
+let audioSilenzioso = new Audio("https://github.com/anars/blank-audio/raw/master/10-seconds-of-silence.mp3");
+audioSilenzioso.loop = true; // Lo teniamo in loop così il widget non sparisce
+
+const ui = {
+    title: document.getElementById('pageTitle'),
+    sidebar: document.getElementById('sidebar'),
+    overlay: document.getElementById('sidebar-overlay'),
+    select: document.getElementById('streetSelect'),
+    input: document.getElementById('civicoInput'),
+    list: document.getElementById('deliveryList'),
+    addBtn: document.getElementById('addBtn'),
+    zoneBtns: document.querySelectorAll('.zone-btn'),
+    voiceToggle: document.getElementById('voiceToggle')
+};
+
+// === INIZIALIZZAZIONE ===
+function init() {
+    loadZone(currentZoneName);
+    ui.addBtn.addEventListener('click', addDelivery);
+    ui.input.addEventListener('keypress', (e) => { if(e.key === 'Enter') addDelivery(); });
+
+    // Sblocco audio e permessi Media al primo tocco
+    document.addEventListener('click', () => {
+        audioSilenzioso.play().then(() => audioSilenzioso.pause());
+    }, { once: true });
+
+    // Configurazione tasti Apple Watch (Media Session)
+    if ('mediaSession' in navigator) {
+        // Quando premi "Avanti" sull'Apple Watch
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+            completamentoRemoto();
+        });
+        // Quando premi "Play" o "Pausa" (opzionale, lo usiamo come backup)
+        navigator.mediaSession.setActionHandler('play', () => {
+            audioSilenzioso.play();
+            trovaEAvvisaProssimo();
+        });
+    }
+
+    const vPref = localStorage.getItem('voiceEnabled');
+    ui.voiceToggle.checked = vPref === null ? true : JSON.parse(vPref);
+    ui.voiceToggle.addEventListener('change', () => localStorage.setItem('voiceEnabled', ui.voiceToggle.checked));
+}
+
+// Funzione chiamata dal tasto "Avanti" dell'Apple Watch
+function completamentoRemoto() {
+    const indiceProssimo = deliveries.findIndex(d => !d.completed);
+    if (indiceProssimo !== -1) {
+        toggleComplete(indiceProssimo);
+    }
+}
+
+function loadZone(zoneName) {
+    currentZoneName = zoneName;
+    localStorage.setItem("lastZone", zoneName);
+    ui.title.textContent = zoneName;
+    const data = localStorage.getItem(`deliveries_${zoneName}`);
+    deliveries = data ? JSON.parse(data) : [];
+    populateSelect();
+    renderList();
+    toggleSidebar(false);
+}
+
+function populateSelect() {
+    const streets = [...new Set(DB_ZONE[currentZoneName].map(r => r.street))].sort();
+    ui.select.innerHTML = '<option value="" disabled selected>Seleziona Via...</option>';
+    streets.forEach(s => {
+        const o = document.createElement('option');
+        o.value = s; o.textContent = s;
+        ui.select.appendChild(o);
+    });
+}
+
+// Gestione Lettere Minuscole
+function addDelivery() {
+    const street = ui.select.value;
+    const civico = ui.input.value.trim(); // Accetta minuscole
+    if (!street || !civico) return;
+
+    const isValid = DB_ZONE[currentZoneName]
+        .filter(r => r.street === street)
+        .some(e => e.civici.some(c => c.toLowerCase() === civico.toLowerCase()));
+
+    deliveries.push({ street, civico, isValid, completed: false });
+    sortDeliveries();
+    saveData();
+    renderList();
+    ui.input.value = ''; ui.input.focus();
+}
+
+function sortDeliveries() {
+    const ref = DB_ZONE[currentZoneName];
+    deliveries.sort((a, b) => getIdx(a, ref) - getIdx(b, ref));
+}
+
+function getIdx(del, ref) {
+    for(let i=0; i<ref.length; i++) {
+        if(ref[i].street === del.street) {
+            const ci = ref[i].civici.indexOf(del.civico.toLowerCase());
+            return ci !== -1 ? (i * 1000) + ci : (i * 1000) + 999;
+        }
+    }
+    return 999999;
+}
+
+function renderList() {
+    ui.list.innerHTML = '';
+    deliveries.forEach((it, i) => {
+        const div = document.createElement('div');
+        div.className = `delivery-card ${it.completed ? 'completed' : ''} ${!it.isValid ? 'error-card' : ''}`;
+        div.innerHTML = `
+            <div class="delivery-info">
+                <span class="delivery-street">${it.street}</span>
+                <span class="delivery-number">${it.civico}</span>
+            </div>
+            <button class="status-btn" onclick="toggleComplete(${i})">${it.completed ? '↩️' : '✅'}</button>
+        `;
+        ui.list.appendChild(div);
+    });
+}
+
+function toggleComplete(index) {
+    deliveries[index].completed = !deliveries[index].completed;
+    saveData();
+    renderList();
+    if (deliveries[index].completed) {
+        trovaEAvvisaProssimo();
+    }
+}
+
+function trovaEAvvisaProssimo() {
+    const prossimo = deliveries.find(d => !d.completed);
+    
+    if (prossimo) {
+        const infoWatch = `📦 ${prossimo.civico} - ${prossimo.street}`;
+        
+        // Aggiorna Widget Apple Watch
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: infoWatch,
+                artist: 'Prossima Consegna',
+                album: currentZoneName,
+                artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
+            });
+            audioSilenzioso.play();
+        }
+
+        // Voce
+        if (ui.voiceToggle.checked && 'speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(`${prossimo.street} ${prossimo.civico}`);
+            utter.lang = 'it-IT';
+            window.speechSynthesis.speak(utter);
+        }
+    } else {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({ title: "Giro Completato! ✅" });
+            audioSilenzioso.pause();
+        }
+    }
+}
+
+function saveData() { localStorage.setItem(`deliveries_${currentZoneName}`, JSON.stringify(deliveries)); }
+function toggleSidebar(s) {
+    const open = s !== undefined ? s : !ui.sidebar.classList.contains('active');
+    ui.sidebar.classList.toggle('active', open);
+    ui.overlay.classList.toggle('active', open);
+}
+function clearZone() { if(confirm("Svuotare tutto?")) { deliveries = []; saveData(); renderList(); audioSilenzioso.pause(); } }
+
+init();
